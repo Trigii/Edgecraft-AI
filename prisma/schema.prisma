@@ -1,0 +1,328 @@
+// Edgecraft AI — Trading Copilot
+//
+// Design principles for this schema:
+//   1. Multi-account from day one (a trader has demo + live + multiple brokers).
+//   2. Multi-asset: forex, stocks, crypto, futures, options share the Trade model.
+//   3. Money is stored as Float for simplicity; production should migrate to Decimal.
+//   4. Soft-delete absent on purpose — trade history is a learning artifact.
+//   5. Extensibility: optional JSON `metadata` on most entities for forward-compat.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Identity ----------
+
+model User {
+  id            String   @id @default(cuid())
+  email         String?  @unique
+  name          String?
+  experience    String   @default("beginner") // beginner | intermediate | pro
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  settings      Settings?
+  accounts      Account[]
+  strategies    Strategy[]
+  tags          Tag[]
+  checklists    Checklist[]
+  insights      Insight[]
+  journalEntries JournalEntry[]
+}
+
+model Settings {
+  id                    String  @id @default(cuid())
+  userId                String  @unique
+  user                  User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Reporting currency for aggregate stats
+  baseCurrency          String  @default("USD")
+
+  // Risk management defaults
+  riskPerTradePct       Float   @default(1.0)   // % of equity per trade
+  maxDailyLossPct       Float   @default(3.0)   // hard stop for the day
+  maxOpenTrades         Int     @default(5)
+  minRiskReward         Float   @default(1.5)   // minimum R:R the copilot will approve
+
+  // Copilot behavior
+  enforcePreTradeChecklist Boolean @default(true)
+  tiltDetectionEnabled     Boolean @default(true)
+  overtradingThreshold     Int     @default(5)   // trades/day before warning
+
+  // AI
+  aiEnabled             Boolean @default(false)
+  aiModel               String  @default("claude-sonnet-4-6")
+
+  // UI
+  theme                 String  @default("dark")
+  defaultTimezone       String  @default("UTC")
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+// ---------- Accounts ----------
+
+model Account {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name            String                       // "Binance Spot", "FTMO Challenge", "IBKR Live"
+  broker          String?                      // free-form: "Binance", "MT5", "IBKR"
+  accountType     String   @default("live")    // live | demo | paper | prop
+  assetFocus      String   @default("mixed")   // forex | stocks | crypto | futures | mixed
+  currency        String   @default("USD")
+  initialBalance  Float    @default(10000)
+  leverage        Float    @default(1)
+  isActive        Boolean  @default(true)
+
+  metadata        String?                      // JSON: broker-specific fields
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  trades          Trade[]
+  balances        BalanceSnapshot[]
+
+  @@index([userId])
+}
+
+// Periodic balance snapshots — supports deposits/withdrawals and accurate equity curves.
+model BalanceSnapshot {
+  id          String   @id @default(cuid())
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  takenAt     DateTime
+  balance     Float
+  equity      Float
+  reason      String   @default("manual")     // manual | deposit | withdrawal | sync
+  note        String?
+
+  @@index([accountId, takenAt])
+}
+
+// ---------- Trades ----------
+
+model Trade {
+  id              String   @id @default(cuid())
+  accountId       String
+  account         Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  // Instrument
+  symbol          String                       // EURUSD, AAPL, BTCUSDT, ES, etc.
+  assetType       String   @default("forex")   // forex | stock | crypto | future | option | index
+  exchange        String?
+  quoteCurrency   String?                      // USD, USDT, EUR — for FX/crypto
+
+  // Direction & sizing
+  direction       String                       // long | short
+  size            Float                        // contracts/lots/shares/units
+  leverage        Float    @default(1)
+
+  // Price plan
+  entryPrice      Float
+  stopLoss        Float?
+  takeProfit      Float?
+
+  // Execution
+  exitPrice       Float?
+  fees            Float    @default(0)
+  swap            Float    @default(0)         // overnight financing for FX/CFDs
+  slippage        Float?
+
+  // Times (UTC)
+  openedAt        DateTime
+  closedAt        DateTime?
+  plannedAt       DateTime?                    // when the idea was logged pre-execution
+
+  // State
+  status          String   @default("open")    // open | closed | cancelled
+  outcome         String?                      // win | loss | breakeven (derived but cached)
+
+  // P&L (cached on close for fast aggregation)
+  pnl             Float?                       // in account currency, net of fees
+  pnlPct          Float?                       // % of risked capital
+  rMultiple       Float?                       // realized P&L / initial risk
+
+  // Excursions (Maximum Adverse / Favorable Excursion)
+  mae             Float?                       // worst unrealized drawdown during trade
+  mfe             Float?                       // best unrealized profit during trade
+
+  // Context
+  strategyId      String?
+  strategy        Strategy? @relation(fields: [strategyId], references: [id])
+
+  // Trader psychology — cheap, high-signal data
+  confidencePre   Int?                         // 1-10 self-rating before entry
+  emotionPre      String?                      // calm | fomo | revenge | uncertain | confident
+  emotionPost     String?
+
+  // Free-form
+  thesis          String?                      // why am I taking this trade?
+  notes           String?                      // post-mortem
+  mistakes        String?                      // tagged mistakes, comma-separated for now
+  screenshots     String?                      // JSON array of URLs/paths
+
+  // Tagging
+  tags            TradeTag[]
+
+  // Pre-trade checklist response
+  checklistResponses ChecklistResponse[]
+
+  metadata        String?                      // JSON
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([accountId, openedAt])
+  @@index([symbol])
+  @@index([status])
+  @@index([strategyId])
+}
+
+// ---------- Strategies ----------
+
+model Strategy {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  // Free-form playbook — markdown of entry rules, exit rules, invalidation, etc.
+  playbook    String?
+  // Which markets/timeframes this strategy targets
+  markets     String?  // comma-separated
+  timeframes  String?  // comma-separated
+  color       String   @default("#7cf5b6")
+  isArchived  Boolean  @default(false)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  trades      Trade[]
+
+  @@unique([userId, name])
+}
+
+// ---------- Tags ----------
+
+model Tag {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  color     String   @default("#8a94a6")
+  // category lets us group tags: setup, mistake, emotion, news, session, ...
+  category  String   @default("general")
+
+  trades    TradeTag[]
+
+  @@unique([userId, name])
+}
+
+model TradeTag {
+  tradeId   String
+  tagId     String
+  trade     Trade   @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([tradeId, tagId])
+}
+
+// ---------- Pre-trade checklists ----------
+
+model Checklist {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  // JSON array of items: [{ id, text, required, category }]
+  items       String
+  isDefault   Boolean  @default(false)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  responses   ChecklistResponse[]
+
+  @@unique([userId, name])
+}
+
+model ChecklistResponse {
+  id           String   @id @default(cuid())
+  tradeId      String
+  trade        Trade    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  checklistId  String
+  checklist    Checklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  // JSON: { [itemId]: { checked: boolean, note?: string } }
+  responses    String
+  completedPct Float    @default(0)
+
+  createdAt    DateTime @default(now())
+
+  @@index([tradeId])
+}
+
+// ---------- Insights & Journal ----------
+
+// Auto-generated observations (rule-based or AI). One-way: insights are immutable.
+model Insight {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind      String                             // pattern | warning | strength | suggestion | ai
+  severity  String   @default("info")          // info | low | medium | high | critical
+  title     String
+  body      String
+  data      String?                            // JSON evidence used to generate it
+  source    String   @default("rules")         // rules | ai
+
+  isDismissed Boolean @default(false)
+  isPinned    Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// Free-form trader journal — separate from per-trade notes.
+// Use for daily reviews, market analysis, lessons learned.
+model JournalEntry {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date      DateTime
+  title     String
+  body      String
+  mood      String?                            // great | good | neutral | poor | terrible
+  tags      String?                            // comma-separated
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, date])
+}
+
+// ---------- Future: market data, economic calendar, alerts ----------
+// Scaffolded but unused in v0.1 — keeps migrations small while signaling intent.
+
+model EconomicEvent {
+  id        String   @id @default(cuid())
+  datetime  DateTime
+  currency  String
+  impact    String                             // low | medium | high
+  title     String
+  forecast  String?
+  previous  String?
+  actual    String?
+
+  @@index([datetime])
+}

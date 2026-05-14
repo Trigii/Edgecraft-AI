@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body {
+    background: theme('colors.bg.DEFAULT');
+    color: theme('colors.ink.DEFAULT');
+  }
+
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+  }
+
+  input, select, textarea {
+    @apply bg-bg-elevated border border-bg-border text-ink placeholder:text-ink-subtle rounded px-3 py-2 outline-none transition-colors;
+  }
+  input:focus, select:focus, textarea:focus {
+    @apply border-edge;
+  }
+
+  table { border-collapse: separate; border-spacing: 0; }
+}
+
+@layer components {
+  .card {
+    @apply bg-bg-surface border border-bg-border rounded-lg p-5;
+  }
+  .card-tight {
+    @apply bg-bg-surface border border-bg-border rounded-lg p-3;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-3 py-2 rounded text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-edge text-bg hover:bg-edge-muted;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent border border-bg-border text-ink hover:bg-bg-elevated;
+  }
+  .btn-danger {
+    @apply btn bg-bear/10 border border-bear/40 text-bear hover:bg-bear/20;
+  }
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+  .badge-bull { @apply badge bg-bull/15 text-bull; }
+  .badge-bear { @apply badge bg-bear/15 text-bear; }
+  .badge-warn { @apply badge bg-warn/15 text-warn; }
+  .badge-info { @apply badge bg-info/15 text-info; }
+  .badge-muted { @apply badge bg-bg-elevated text-ink-muted border border-bg-border; }
+
+  .kpi-label { @apply text-xs uppercase tracking-wider text-ink-subtle; }
+  .kpi-value { @apply text-2xl font-semibold mt-1 font-mono; }
+  .kpi-sub   { @apply text-xs text-ink-muted mt-1; }
+
+  .link { @apply text-edge hover:text-edge-muted underline-offset-2 hover:underline; }
+}
+
+/* Recharts overrides */
+.recharts-cartesian-grid line {
+  stroke: rgb(31 38 48 / 0.7);
+}
+.recharts-text {
+  fill: theme('colors.ink.muted');
+}
+.recharts-tooltip-wrapper {
+  outline: none;
+}
