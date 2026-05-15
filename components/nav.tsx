@@ -11,10 +11,12 @@ import {
   Layers,
   Settings as SettingsIcon,
   Bot,
+  LineChart,
 } from "lucide-react";
 
 const items = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/markets", label: "Markets", icon: LineChart },
   { href: "/journal", label: "Journal", icon: BookOpen },
   { href: "/copilot", label: "Pre-Trade", icon: Bot },
   { href: "/calculator", label: "Calculator", icon: Calculator },

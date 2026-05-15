@@ -371,7 +371,53 @@ async function main() {
     if (i % 20 === 0) console.log(`  ${i}/${trades.length} trades`);
   }
 
-  console.log(`Seeded ${trades.length} trades.`);
+  // A handful of OPEN positions so the live-quotes / live-P&L UI has
+  // something to render on the first visit. These intentionally use the
+  // same symbol routing the market layer recognises (EURUSD, BTCUSDT,
+  // AAPL) so the user sees real prices flowing in.
+  console.log("Adding open positions…");
+  const openPlans: { plan: Plan; direction: "long" | "short"; offsetMinutes: number }[] = [
+    { plan: PLANS[0], direction: "long", offsetMinutes: 240 },
+    { plan: PLANS[3], direction: "long", offsetMinutes: 90 },
+    { plan: PLANS[5], direction: "short", offsetMinutes: 30 },
+  ];
+  for (const { plan, direction, offsetMinutes } of openPlans) {
+    const opened = new Date(now);
+    opened.setUTCMinutes(opened.getUTCMinutes() - offsetMinutes);
+    const entryPrice = plan.pricePivot * (1 + rand(-0.001, 0.001));
+    const stopDistance = entryPrice * plan.volatility;
+    const stopLoss =
+      direction === "long" ? entryPrice - stopDistance : entryPrice + stopDistance;
+    const takeProfit =
+      direction === "long" ? entryPrice + stopDistance * 2 : entryPrice - stopDistance * 2;
+    const size = 100 / stopDistance; // ~$100 risk
+    await prisma.trade.create({
+      data: {
+        accountId: account.id,
+        symbol: plan.symbol,
+        assetType: plan.assetType,
+        direction,
+        size,
+        entryPrice,
+        stopLoss,
+        takeProfit,
+        fees: 0,
+        swap: 0,
+        openedAt: opened,
+        status: "open",
+        thesis: pick([
+          "Break of yesterday's high after consolidation.",
+          "VWAP reclaim with rising volume.",
+          "Failed move at major level — taking the reverse.",
+        ]),
+        emotionPre: "calm",
+        confidencePre: Math.floor(rand(6, 9)),
+        strategyId: pick(strategies).id,
+      },
+    });
+  }
+
+  console.log(`Seeded ${trades.length} closed trades + ${openPlans.length} open positions.`);
   console.log("Done.");
 }
 

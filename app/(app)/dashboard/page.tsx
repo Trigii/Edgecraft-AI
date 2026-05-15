@@ -7,6 +7,8 @@ import { DrawdownChart } from "@/components/charts/drawdown-chart";
 import { PnlBars } from "@/components/charts/pnl-bars";
 import { HourDayHeatmap } from "@/components/charts/heatmap";
 import { WinRatePie } from "@/components/charts/winrate-pie";
+import { MarketsSnapshot } from "@/components/markets/markets-snapshot";
+import { OpenPositions } from "@/components/markets/open-positions";
 import {
   computeCoreMetrics,
   computeEquityCurve,
@@ -68,6 +70,10 @@ export default async function Dashboard() {
 
   return (
     <div className="space-y-6">
+      <MarketsSnapshot accountId={account.id} />
+
+      <OpenPositions accountId={account.id} currency={currency} />
+
       <Section title="Performance" subtitle={`${account.name} · since ${account.createdAt.toISOString().slice(0, 10)}`}>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Kpi

@@ -2,11 +2,13 @@ import { prisma } from "@/lib/db";
 import { Section } from "@/components/ui/section";
 import { Kpi } from "@/components/ui/kpi";
 import { closeTrade, deleteTrade, updateTradeNotes } from "@/app/actions/trades";
-import { formatCurrency, signed } from "@/lib/utils";
+import { formatCurrency, signed, cn } from "@/lib/utils";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { isAiEnabled } from "@/lib/ai/copilot";
 import { AiPostMortem } from "./post-mortem";
+import { getQuote, unrealizedPnl } from "@/lib/market";
+import { Globe2 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +21,31 @@ export default async function TradeDetail({ params }: { params: Promise<{ id: st
   if (!trade) notFound();
   const t = trade;
   const currency = t.account.currency;
+
+  // For open trades, pull a live quote and compute unrealized P&L so the
+  // detail page shows a meaningful "where am I right now" view.
+  const quote = t.status === "open" ? await getQuote(t.symbol, t.assetType) : undefined;
+  const liveUnrealized =
+    t.status === "open" && quote
+      ? unrealizedPnl({
+          direction: t.direction,
+          entryPrice: t.entryPrice,
+          size: t.size,
+          fees: t.fees,
+          swap: t.swap,
+          currentPrice: quote.price,
+        })
+      : null;
+  const liveRMultiple =
+    liveUnrealized != null && t.stopLoss != null
+      ? (() => {
+          const risk = Math.max(
+            0,
+            (t.direction === "short" ? t.stopLoss - t.entryPrice : t.entryPrice - t.stopLoss) * t.size,
+          );
+          return risk > 0 ? liveUnrealized / risk : null;
+        })()
+      : null;
 
   return (
     <div className="space-y-5">
@@ -57,6 +84,59 @@ export default async function TradeDetail({ params }: { params: Promise<{ id: st
           <Kpi label="Status" value={t.status} tone={t.status === "open" ? "warn" : "default"} />
         </div>
       </Section>
+
+      {t.status === "open" && quote && (
+        <Section title="Live" subtitle={`Current ${t.symbol} price · ${quote.source} · ${quote.asOf.toUTCString().slice(-12, -4)} UTC`}>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Kpi
+              label="Current price"
+              value={quote.price.toFixed(5)}
+              sub={
+                quote.changePct24h != null
+                  ? `${quote.changePct24h >= 0 ? "+" : ""}${quote.changePct24h.toFixed(2)}% 24h`
+                  : ""
+              }
+              tone={
+                quote.changePct24h == null
+                  ? "default"
+                  : quote.changePct24h >= 0
+                    ? "bull"
+                    : "bear"
+              }
+            />
+            <Kpi
+              label="Unrealized P&L"
+              value={liveUnrealized != null ? `${liveUnrealized >= 0 ? "+" : ""}${formatCurrency(liveUnrealized, currency)}` : "—"}
+              tone={liveUnrealized == null ? "default" : liveUnrealized >= 0 ? "bull" : "bear"}
+            />
+            <Kpi
+              label="Unrealized R"
+              value={liveRMultiple != null ? `${liveRMultiple >= 0 ? "+" : ""}${liveRMultiple.toFixed(2)}R` : "—"}
+              tone={liveRMultiple == null ? "default" : liveRMultiple >= 0 ? "bull" : "bear"}
+            />
+            <Kpi
+              label="Entry vs now"
+              value={`${(((quote.price - t.entryPrice) / t.entryPrice) * 100).toFixed(2)}%`}
+              sub={`${t.direction === "long" ? "wants up" : "wants down"}`}
+              tone={
+                (t.direction === "long" && quote.price > t.entryPrice) ||
+                (t.direction === "short" && quote.price < t.entryPrice)
+                  ? "bull"
+                  : "bear"
+              }
+            />
+          </div>
+        </Section>
+      )}
+
+      {t.status === "open" && !quote && (
+        <Section title="Live">
+          <div className="card-tight flex items-center gap-2 text-sm text-ink-muted">
+            <Globe2 size={14} />
+            No live quote available for {t.symbol}. The trade detail still works; we just can't show unrealized P&L right now.
+          </div>
+        </Section>
+      )}
 
       {t.status === "open" && (
         <Section title="Close this trade">

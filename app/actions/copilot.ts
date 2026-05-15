@@ -4,6 +4,7 @@ import { evaluatePreTrade } from "@/lib/insights/pretrade";
 import type { PreTradeInput } from "@/lib/insights/pretrade";
 import { getDefaultUser, getActiveAccount, getTodayContext } from "@/lib/queries";
 import { prisma } from "@/lib/db";
+import { getQuote } from "@/lib/market";
 
 export async function evaluateTradeIdea(input: PreTradeInput) {
   const user = await getDefaultUser();
@@ -46,6 +47,21 @@ export async function evaluateTradeIdea(input: PreTradeInput) {
   );
 
   return { ...result, balance, currency: account.currency };
+}
+
+// Fetch the live quote for a symbol so the form can show "current price"
+// next to the entry input. Returns null on any failure — UI handles it.
+export async function getSymbolQuote(symbol: string, assetType?: string) {
+  if (!symbol) return null;
+  const q = await getQuote(symbol, assetType);
+  if (!q) return null;
+  return {
+    symbol: q.symbol,
+    price: q.price,
+    changePct24h: q.changePct24h ?? null,
+    source: q.source,
+    asOf: q.asOf.toISOString(),
+  };
 }
 
 function asTradeRecord(t: {

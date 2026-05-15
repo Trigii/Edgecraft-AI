@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { evaluateTradeIdea } from "@/app/actions/copilot";
-import { CheckCircle2, AlertTriangle, ShieldAlert, Info, ShieldCheck, ArrowRight } from "lucide-react";
+import { useEffect, useRef, useState, useTransition } from "react";
+import { evaluateTradeIdea, getSymbolQuote } from "@/app/actions/copilot";
+import { CheckCircle2, AlertTriangle, ShieldAlert, Info, ShieldCheck, ArrowRight, TrendingUp, TrendingDown, Globe2 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import Link from "next/link";
 
 type Result = Awaited<ReturnType<typeof evaluateTradeIdea>>;
+type Quote = NonNullable<Awaited<ReturnType<typeof getSymbolQuote>>>;
 
 export function PreTradeForm({
   currency,
@@ -30,6 +31,36 @@ export function PreTradeForm({
 
   function update<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
     setForm((f) => ({ ...f, [k]: v }));
+  }
+
+  // Live market quote for the entered symbol. Debounced 600ms after typing
+  // stops so we don't hammer the network on every keystroke.
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const quoteAbort = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!form.symbol || form.symbol.length < 3) {
+      setQuote(null);
+      return;
+    }
+    if (quoteAbort.current) window.clearTimeout(quoteAbort.current);
+    quoteAbort.current = window.setTimeout(async () => {
+      setQuoteLoading(true);
+      try {
+        const q = await getSymbolQuote(form.symbol);
+        setQuote(q);
+      } finally {
+        setQuoteLoading(false);
+      }
+    }, 600);
+    return () => {
+      if (quoteAbort.current) window.clearTimeout(quoteAbort.current);
+    };
+  }, [form.symbol]);
+
+  function useLivePrice() {
+    if (quote) update("entryPrice", String(quote.price));
   }
 
   function submit(e: React.FormEvent) {
@@ -58,6 +89,12 @@ export function PreTradeForm({
             onChange={(e) => update("symbol", e.target.value)}
             placeholder="EURUSD"
             required
+          />
+          <LiveQuoteStrip
+            quote={quote}
+            loading={quoteLoading}
+            onUse={useLivePrice}
+            visible={form.symbol.length >= 3}
           />
         </Field>
 
@@ -228,6 +265,48 @@ function ValidationCard({ v }: { v: { level: string; title: string; message: str
           <div className="text-xs text-ink-muted mt-0.5">{v.message}</div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function LiveQuoteStrip({
+  quote,
+  loading,
+  onUse,
+  visible,
+}: {
+  quote: Quote | null;
+  loading: boolean;
+  onUse: () => void;
+  visible: boolean;
+}) {
+  if (!visible) return null;
+  if (loading) {
+    return (
+      <div className="text-[11px] text-ink-subtle flex items-center gap-1 mt-1">
+        <Globe2 size={11} /> looking up price…
+      </div>
+    );
+  }
+  if (!quote) {
+    return (
+      <div className="text-[11px] text-ink-subtle flex items-center gap-1 mt-1">
+        <Globe2 size={11} /> no live quote for that symbol
+      </div>
+    );
+  }
+  const positive = (quote.changePct24h ?? 0) >= 0;
+  return (
+    <div className="text-[11px] mt-1 flex items-center gap-2">
+      <span className="text-ink-muted">live:</span>
+      <span className="font-mono text-ink">{quote.price.toFixed(5)}</span>
+      <span className={positive ? "text-bull" : "text-bear"}>
+        {positive ? <TrendingUp size={10} className="inline" /> : <TrendingDown size={10} className="inline" />}{" "}
+        {quote.changePct24h != null ? `${quote.changePct24h.toFixed(2)}%` : "—"}
+      </span>
+      <button type="button" onClick={onUse} className="ml-auto text-edge hover:text-edge-muted">
+        use as entry →
+      </button>
     </div>
   );
 }
